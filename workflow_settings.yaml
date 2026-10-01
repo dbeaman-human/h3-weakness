@@ -1,4 +1,4 @@
-defaultProject: fluent-horizon-196715
-defaultDataset: dataform
-defaultAssertionDataset: dataform_assertions
+defaultProject: default-project-102026
+defaultDataset: default_dataset
+defaultAssertionDataset: default_assertions
 dataformCoreVersion: 3.0.52
