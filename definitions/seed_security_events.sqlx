@@ -1,0 +1,76 @@
+config {
+  type: "operations",
+  tags: ["seed"],
+  hasOutput: false
+}
+
+-- Deploys the seeding procedure and runs it. Run on demand, not on every workflow run:
+--   dataform run --tags seed          (or select the "seed" tag in the Dataform UI)
+-- Re-running resets security_events to the demo data. Set include_bad_row to TRUE
+-- to add a weakness with no valid target so assert_weakness fails.
+
+CREATE SCHEMA IF NOT EXISTS `${database()}.${schema()}`
+
+---
+
+CREATE OR REPLACE PROCEDURE `${database()}.${schema()}.sp_seed_security_events`(reset BOOL, include_bad_row BOOL)
+BEGIN
+  CREATE TABLE IF NOT EXISTS `${database()}.${schema()}.security_events` (
+    event_id        STRING    NOT NULL,
+    entity_type     STRING,
+    entity_id       STRING,
+    event_type      STRING    NOT NULL,
+    event_timestamp TIMESTAMP NOT NULL,
+    payload         JSON
+  )
+  PARTITION BY DATE(event_timestamp);
+
+  IF reset THEN
+    DELETE FROM `${database()}.${schema()}.security_events` WHERE TRUE;
+  END IF;
+
+  INSERT INTO `${database()}.${schema()}.security_events`
+    (event_id, entity_type, entity_id, event_type, event_timestamp, payload)
+  VALUES
+    -- Hosts
+    ('e001','HOST','h-1','HOST_DISCOVERED','2026-09-01 08:00:00 UTC', JSON '{"hostname":"web-01","ip_address":"10.0.0.11"}'),
+    ('e002','HOST','h-2','HOST_DISCOVERED','2026-09-01 08:01:00 UTC', JSON '{"hostname":"db-01","ip_address":"10.0.0.21"}'),
+    ('e003','HOST','h-3','HOST_DISCOVERED','2026-09-01 08:02:00 UTC', JSON '{"hostname":"old-box","ip_address":"10.0.0.99"}'),
+    ('e004','HOST','h-1','HOST_UPDATED',   '2026-09-10 12:00:00 UTC', JSON '{"hostname":"web-01","ip_address":"10.0.0.12"}'),
+    ('e005','HOST','h-3','HOST_DELETED',   '2026-09-15 09:00:00 UTC', JSON '{"hostname":"old-box","ip_address":"10.0.0.99"}'),
+    -- Services
+    ('e010','SERVICE','s-1','SERVICE_DISCOVERED','2026-09-01 08:10:00 UTC', JSON '{"name":"nginx","port":443,"protocol":"tcp"}'),
+    ('e011','SERVICE','s-2','SERVICE_DISCOVERED','2026-09-01 08:11:00 UTC', JSON '{"name":"postgres","port":5432,"protocol":"tcp"}'),
+    ('e012','SERVICE','s-3','SERVICE_DISCOVERED','2026-09-01 08:12:00 UTC', JSON '{"name":"sshd","port":22,"protocol":"tcp"}'),
+    -- Applications
+    ('e020','APPLICATION','a-1','APPLICATION_DISCOVERED','2026-09-01 08:20:00 UTC', JSON '{"name":"storefront","version":"2.4.1"}'),
+    ('e021','APPLICATION','a-2','APPLICATION_DISCOVERED','2026-09-01 08:21:00 UTC', JSON '{"name":"billing-api","version":"1.9.0"}'),
+    -- Weaknesses (each targets exactly one entity)
+    ('e030','WEAKNESS','w-1','WEAKNESS_FOUND','2026-09-02 10:00:00 UTC', JSON '{"cve":"CVE-2024-3094","severity":9.8,"target_type":"HOST","target_id":"h-1"}'),
+    ('e031','WEAKNESS','w-2','WEAKNESS_FOUND','2026-09-02 10:05:00 UTC', JSON '{"cve":"CVE-2023-38408","severity":7.5,"target_type":"SERVICE","target_id":"s-3"}'),
+    ('e032','WEAKNESS','w-3','WEAKNESS_FOUND','2026-09-03 11:00:00 UTC', JSON '{"cve":"CVE-2021-44228","severity":10.0,"target_type":"APPLICATION","target_id":"a-2"}'),
+    ('e033','WEAKNESS','w-4','WEAKNESS_FOUND','2026-09-03 11:30:00 UTC', JSON '{"cve":"CVE-2022-0778","severity":7.5,"target_type":"SERVICE","target_id":"s-1"}'),
+    ('e034','WEAKNESS','w-5','WEAKNESS_FOUND','2026-09-04 09:00:00 UTC', JSON '{"cve":"CVE-2023-4863","severity":8.8,"target_type":"APPLICATION","target_id":"a-1"}'),
+    ('e035','WEAKNESS','w-4','WEAKNESS_REMEDIATED','2026-09-20 14:00:00 UTC', JSON '{"cve":"CVE-2022-0778","severity":7.5,"target_type":"SERVICE","target_id":"s-1"}'),
+    ('e036','WEAKNESS','w-1','WEAKNESS_UPDATED','2026-09-21 08:00:00 UTC', JSON '{"cve":"CVE-2024-3094","severity":10.0,"target_type":"HOST","target_id":"h-1"}'),
+    -- Edges (host -> service -> application)
+    ('e040','EDGE','h-1>s-1','EDGE_LINKED','2026-09-01 09:00:00 UTC', JSON '{"source_type":"HOST","source_id":"h-1","target_type":"SERVICE","target_id":"s-1"}'),
+    ('e041','EDGE','h-2>s-2','EDGE_LINKED','2026-09-01 09:01:00 UTC', JSON '{"source_type":"HOST","source_id":"h-2","target_type":"SERVICE","target_id":"s-2"}'),
+    ('e042','EDGE','h-1>s-3','EDGE_LINKED','2026-09-01 09:02:00 UTC', JSON '{"source_type":"HOST","source_id":"h-1","target_type":"SERVICE","target_id":"s-3"}'),
+    ('e043','EDGE','s-1>a-1','EDGE_LINKED','2026-09-01 09:03:00 UTC', JSON '{"source_type":"SERVICE","source_id":"s-1","target_type":"APPLICATION","target_id":"a-1"}'),
+    ('e044','EDGE','s-2>a-2','EDGE_LINKED','2026-09-01 09:04:00 UTC', JSON '{"source_type":"SERVICE","source_id":"s-2","target_type":"APPLICATION","target_id":"a-2"}'),
+    ('e045','EDGE','h-1>s-3','EDGE_UNLINKED','2026-09-18 16:00:00 UTC', JSON '{"source_type":"HOST","source_id":"h-1","target_type":"SERVICE","target_id":"s-3"}')
+  ;
+
+  IF include_bad_row THEN
+    INSERT INTO `${database()}.${schema()}.security_events`
+      (event_id, entity_type, entity_id, event_type, event_timestamp, payload)
+    VALUES
+      ('e099','WEAKNESS','w-bad','WEAKNESS_FOUND','2026-09-22 10:00:00 UTC',
+       JSON '{"cve":"CVE-0000-0000","severity":5.0,"target_type":"UNKNOWN","target_id":"x-1"}');
+  END IF;
+END
+
+---
+
+CALL `${database()}.${schema()}.sp_seed_security_events`(TRUE, FALSE)
